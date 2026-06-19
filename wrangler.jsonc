@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "appfilmes-api",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-06-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "SESSION_TTL_SECONDS": "604800"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "appfilmes-db",
+      "database_id": "cf44c033-06e4-4b0c-9e47-90dd71a7ae3d",
+      "migrations_dir": "./cloudflare"
+    }
+  ]
+}

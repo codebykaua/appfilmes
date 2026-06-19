@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AppFilmes - Player por Link</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <section id="authScreen" class="auth-screen" aria-label="Acesso ao AppFilmes">
+      <div class="auth-hero">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true">AF</span>
+          <span>AppFilmes</span>
+        </div>
+        <h1>Player privado por link</h1>
+        <p>Entre na sua conta para manter seus links recentes separados e preparar o app para salvar usuarios na Cloudflare.</p>
+        <dl class="auth-stats" aria-label="Resumo do sistema">
+          <div>
+            <dt>Conta</dt>
+            <dd>Local agora</dd>
+          </div>
+          <div>
+            <dt>API</dt>
+            <dd>Cloudflare pronta</dd>
+          </div>
+          <div>
+            <dt>Player</dt>
+            <dd>Privado</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="auth-card">
+        <div class="auth-card-head">
+          <p>Acesso</p>
+          <h2>Bem-vindo</h2>
+        </div>
+
+        <div class="auth-tabs" role="tablist" aria-label="Login e cadastro">
+          <button id="loginTab" class="auth-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="loginForm">Entrar</button>
+          <button id="signupTab" class="auth-tab" type="button" role="tab" aria-selected="false" aria-controls="signupForm">Cadastro</button>
+        </div>
+
+        <form id="loginForm" class="auth-form" autocomplete="on">
+          <label>
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" placeholder="voce@email.com" required />
+          </label>
+          <label>
+            <span>Senha</span>
+            <input name="password" type="password" autocomplete="current-password" placeholder="Sua senha" required />
+          </label>
+          <button class="primary-action" type="submit">Entrar</button>
+        </form>
+
+        <form id="signupForm" class="auth-form" autocomplete="on" hidden>
+          <label>
+            <span>Nome</span>
+            <input name="name" type="text" autocomplete="name" placeholder="Seu nome" required />
+          </label>
+          <label>
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" placeholder="voce@email.com" required />
+          </label>
+          <label>
+            <span>Senha</span>
+            <input name="password" type="password" autocomplete="new-password" placeholder="Minimo 6 caracteres" minlength="6" required />
+          </label>
+          <label>
+            <span>Confirmar senha</span>
+            <input name="confirmPassword" type="password" autocomplete="new-password" placeholder="Repita a senha" minlength="6" required />
+          </label>
+          <button class="primary-action" type="submit">Criar conta</button>
+        </form>
+
+        <p id="authMessage" class="auth-message" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <section id="profileScreen" class="profile-screen" hidden aria-label="Escolha de tela">
+      <header class="profile-topbar">
+        <div class="topbar-brand">
+          <span class="brand-mark small" aria-hidden="true">AF</span>
+          <div>
+            <strong>AppFilmes</strong>
+            <span id="profileAccountName">Conta</span>
+          </div>
+        </div>
+        <button id="profileLogoutButton" type="button">Sair</button>
+      </header>
+
+      <div class="profile-center">
+        <p class="profile-kicker">Escolha sua tela</p>
+        <h1>Quem vai assistir?</h1>
+        <div id="profileList" class="profile-list" aria-live="polite"></div>
+        <button id="addProfileButton" class="profile-add" type="button">Adicionar tela</button>
+        <p id="profileMessage" class="profile-message" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <div id="profileModal" class="modal-backdrop" hidden>
+      <form id="profileForm" class="profile-modal" autocomplete="off">
+        <div class="modal-head">
+          <p>Tela</p>
+          <h2 id="profileModalTitle">Nova tela</h2>
+        </div>
+        <label>
+          <span>Nome da tela</span>
+          <input id="profileNameInput" name="name" type="text" maxlength="32" placeholder="Ex: Kaua, Sala, Kids" required />
+        </label>
+        <label>
+          <span>PIN opcional</span>
+          <input id="profilePinInput" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="4 numeros" />
+        </label>
+        <p class="modal-note">Deixe o PIN vazio para tela sem bloqueio. Para remover PIN ao editar, salve com o campo vazio.</p>
+        <p id="profileFormMessage" class="profile-message" aria-live="polite"></p>
+        <div class="modal-actions">
+          <button id="cancelProfileButton" type="button">Cancelar</button>
+          <button class="primary-action" type="submit">Salvar</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="pinModal" class="modal-backdrop" hidden>
+      <form id="pinForm" class="profile-modal compact" autocomplete="off">
+        <div class="modal-head">
+          <p>PIN</p>
+          <h2 id="pinModalTitle">Tela protegida</h2>
+        </div>
+        <label>
+          <span>Digite o PIN</span>
+          <input id="pinInput" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="0000" required />
+        </label>
+        <p id="pinMessage" class="profile-message" aria-live="polite"></p>
+        <div class="modal-actions">
+          <button id="cancelPinButton" type="button">Cancelar</button>
+          <button class="primary-action" type="submit">Entrar</button>
+        </div>
+      </form>
+    </div>
+
+    <main id="appShell" class="app-shell" hidden>
+      <header class="app-topbar">
+        <div class="topbar-brand">
+          <span class="brand-mark small" aria-hidden="true">AF</span>
+          <div>
+            <strong>AppFilmes</strong>
+            <span>Player privado</span>
+          </div>
+        </div>
+        <div class="account-menu">
+          <span id="currentProfileName">Tela</span>
+          <button id="switchProfileButton" type="button">Trocar tela</button>
+          <span id="sessionUserName">Usuario</span>
+          <button id="logoutButton" type="button">Sair</button>
+        </div>
+      </header>
+
+      <section class="player-column" aria-label="Player de video">
+        <div class="video-stage">
+          <div id="emptyState" class="empty-state">
+            <span class="empty-icon" aria-hidden="true">&#9658;</span>
+            <h1>AppFilmes</h1>
+            <p>Cole um link de video e assista aqui dentro.</p>
+          </div>
+          <video id="videoPlayer" class="media-player" controls playsinline></video>
+          <iframe
+            id="embedPlayer"
+            class="embed-player"
+            title="Video incorporado"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+            allowfullscreen
+          ></iframe>
+        </div>
+
+        <div class="status-bar" aria-live="polite">
+          <span id="modeBadge">Aguardando link</span>
+          <span id="statusText">Pronto para carregar videos diretos, HLS, DASH e embeds permitidos.</span>
+        </div>
+      </section>
+
+      <aside class="control-panel" aria-label="Controles do player">
+        <form id="linkForm" class="link-form">
+          <label for="videoUrl">Link do video</label>
+          <div class="input-row">
+            <input
+              id="videoUrl"
+              name="videoUrl"
+              type="url"
+              inputmode="url"
+              autocomplete="url"
+              placeholder="https://exemplo.com/video.mp4"
+              required
+            />
+            <button type="submit" title="Carregar video" aria-label="Carregar video">&#9658;</button>
+          </div>
+        </form>
+
+        <label class="select-row" for="playerMode">
+          <span>Modo de abertura</span>
+          <select id="playerMode">
+            <option value="auto">Detectar automaticamente</option>
+            <option value="direct">Forcar video direto</option>
+            <option value="hls">Forcar HLS .m3u8</option>
+            <option value="dash">Forcar DASH .mpd</option>
+            <option value="embed">Forcar embed/iframe</option>
+          </select>
+        </label>
+
+        <div class="toolbar" aria-label="Acoes rapidas">
+          <button id="pasteButton" type="button">Colar link</button>
+          <button id="clearButton" type="button">Limpar</button>
+        </div>
+
+        <div class="options">
+          <label class="check-row">
+            <input id="autoPlay" type="checkbox" checked />
+            <span>Autoplay quando possivel</span>
+          </label>
+          <label class="check-row">
+            <input id="preferEmbed" type="checkbox" checked />
+            <span>Tentar embed em paginas de video</span>
+          </label>
+        </div>
+
+        <section class="details" aria-label="Formatos suportados">
+          <h2>Formatos</h2>
+          <p>
+            MP4, WebM, OGG, MOV compativel com o navegador, HLS (.m3u8), DASH (.mpd),
+            YouTube, Vimeo, Dailymotion, XVideos, XHamster e iframe quando o site permitir.
+          </p>
+        </section>
+
+        <section class="recent" aria-label="Links recentes">
+          <div class="section-title">
+            <h2>Recentes</h2>
+            <button id="clearRecentButton" type="button" title="Apagar recentes">Limpar</button>
+          </div>
+          <div id="recentList" class="recent-list">
+            <p class="muted">Nenhum link carregado ainda.</p>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="api-config.js" defer></script>
+    <script src="auth.js" defer></script>
+    <script src="script.js" defer></script>
+  </body>
+</html>
