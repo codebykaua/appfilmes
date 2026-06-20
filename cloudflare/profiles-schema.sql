@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   pin_hash TEXT,
   pin_salt TEXT,
   color TEXT NOT NULL DEFAULT '#35d3b4',
+  image_data_url TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

@@ -19,6 +19,11 @@ const profileModal = document.querySelector("#profileModal");
 const profileForm = document.querySelector("#profileForm");
 const profileModalTitle = document.querySelector("#profileModalTitle");
 const profileNameInput = document.querySelector("#profileNameInput");
+const profileImageInput = document.querySelector("#profileImageInput");
+const profileImagePreview = document.querySelector("#profileImagePreview");
+const removeProfileImageButton = document.querySelector("#removeProfileImageButton");
+const profilePinToggle = document.querySelector("#profilePinToggle");
+const profilePinWrap = document.querySelector("#profilePinWrap");
 const profilePinInput = document.querySelector("#profilePinInput");
 const profileFormMessage = document.querySelector("#profileFormMessage");
 const cancelProfileButton = document.querySelector("#cancelProfileButton");
@@ -35,12 +40,16 @@ const PROFILE_UNLOCK_KEY = "appfilmes:unlocked-profile";
 const LOCAL_PROFILES_KEY = "appfilmes:profiles";
 const PROFILE_LIMIT = 5;
 const AUTH_API_BASE = (window.APPFILMES_CONFIG?.apiBaseUrl || "").replace(/\/$/, "");
+const MAX_UPLOAD_IMAGE_BYTES = 3 * 1024 * 1024;
+const MAX_DATA_URL_LENGTH = 170_000;
 
 let activeSession = null;
 let activeProfile = null;
 let profiles = [];
 let editingProfileId = null;
 let pendingPinProfile = null;
+let profileImageDataUrl = null;
+let removeProfileImage = false;
 
 function usesRemoteAuth() {
   return Boolean(AUTH_API_BASE);
@@ -180,6 +189,51 @@ function getLocalProfiles() {
 
 function saveLocalProfiles(value) {
   localStorage.setItem(LOCAL_PROFILES_KEY, JSON.stringify(value));
+}
+
+async function compressImageFile(file, maxSize = 420, quality = 0.78) {
+  if (!file) {
+    return null;
+  }
+
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Escolha um arquivo de imagem.");
+  }
+
+  if (file.size > MAX_UPLOAD_IMAGE_BYTES) {
+    throw new Error("A imagem precisa ter no maximo 3 MB.");
+  }
+
+  const imageUrl = URL.createObjectURL(file);
+  const image = new Image();
+  image.src = imageUrl;
+
+  try {
+    await image.decode();
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+
+  const ratio = Math.min(1, maxSize / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * ratio));
+  const height = Math.max(1, Math.round(image.height * ratio));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d");
+  context.drawImage(image, 0, 0, width, height);
+
+  let dataUrl = canvas.toDataURL("image/webp", quality);
+  if (dataUrl.length > MAX_DATA_URL_LENGTH) {
+    dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+  }
+
+  if (dataUrl.length > MAX_DATA_URL_LENGTH) {
+    throw new Error("A imagem ainda ficou grande. Tente uma foto menor.");
+  }
+
+  return dataUrl;
 }
 
 function bytesToBase64(bytes) {
@@ -349,11 +403,11 @@ async function listProfiles() {
   };
 }
 
-async function createProfile({ name, pin }) {
+async function createProfile({ name, pin, imageDataUrl }) {
   if (usesRemoteAuth()) {
     return requestAuth("/api/profiles", {
       token: activeSession.token,
-      payload: { name, ...(pin ? { pin } : {}) },
+      payload: { name, ...(pin ? { pin } : {}), ...(imageDataUrl ? { imageDataUrl } : {}) },
     });
   }
 
@@ -369,6 +423,7 @@ async function createProfile({ name, pin }) {
     name,
     hasPin: Boolean(pin),
     pin,
+    imageDataUrl: imageDataUrl || null,
     color: ["#35d3b4", "#22aee8", "#f7c66a", "#ff7f8f", "#9d7cff"][userProfiles.length % 5],
     createdAt: now,
     updatedAt: now,
@@ -378,12 +433,24 @@ async function createProfile({ name, pin }) {
   return { profile: sanitizeLocalProfile(profile) };
 }
 
-async function updateProfile(profileId, { name, pin }) {
+async function updateProfile(profileId, { name, pin, pinEnabled, imageDataUrl, removeImage }) {
   if (usesRemoteAuth()) {
+    const payload = { name };
+    if (pinEnabled === false) {
+      payload.pin = "";
+    } else if (pin) {
+      payload.pin = pin;
+    }
+    if (removeImage) {
+      payload.removeImage = true;
+    } else if (imageDataUrl) {
+      payload.imageDataUrl = imageDataUrl;
+    }
+
     return requestAuth(`/api/profiles/${encodeURIComponent(profileId)}`, {
       token: activeSession.token,
       method: "PATCH",
-      payload: { name, ...(pin ? { pin } : {}) },
+      payload,
     });
   }
 
@@ -397,7 +464,10 @@ async function updateProfile(profileId, { name, pin }) {
     return {
       ...profile,
       name,
+      ...(pinEnabled === false ? { pin: "", hasPin: false } : {}),
       ...(pin ? { pin, hasPin: true } : {}),
+      ...(removeImage ? { imageDataUrl: null } : {}),
+      ...(imageDataUrl ? { imageDataUrl } : {}),
       updatedAt: new Date().toISOString(),
     };
   });
@@ -447,6 +517,7 @@ function sanitizeLocalProfile(profile) {
     name: profile.name,
     hasPin: Boolean(profile.hasPin),
     color: profile.color,
+    imageDataUrl: profile.imageDataUrl || null,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
   };
@@ -475,11 +546,14 @@ function renderProfiles(limit = PROFILE_LIMIT) {
     const openButton = document.createElement("button");
     openButton.type = "button";
     openButton.className = "profile-open";
-    openButton.innerHTML = `
-      <span class="profile-avatar" style="--profile-color: ${profile.color || "#35d3b4"}">${getInitials(profile.name)}</span>
-      <strong>${escapeHtml(profile.name)}</strong>
-      <span>${profile.hasPin ? "Protegida por PIN" : "Sem PIN"}</span>
-    `;
+
+    const avatar = createProfileAvatar(profile);
+    const name = document.createElement("strong");
+    name.textContent = profile.name;
+    const meta = document.createElement("span");
+    meta.textContent = profile.hasPin ? "Protegida por PIN" : "Sem PIN";
+
+    openButton.append(avatar, name, meta);
     openButton.addEventListener("click", () => selectProfile(profile));
 
     const actions = document.createElement("div");
@@ -502,6 +576,25 @@ function renderProfiles(limit = PROFILE_LIMIT) {
 
   addProfileButton.disabled = profiles.length >= limit;
   addProfileButton.textContent = profiles.length >= limit ? `Limite de ${limit} telas atingido` : `Adicionar tela (${profiles.length}/${limit})`;
+}
+
+function createProfileAvatar(profile) {
+  const avatar = document.createElement("span");
+  avatar.className = "profile-avatar";
+  avatar.style.setProperty("--profile-color", profile.color || "#35d3b4");
+
+  if (profile.imageDataUrl) {
+    avatar.classList.add("has-image");
+    const image = document.createElement("img");
+    image.className = "profile-avatar-img";
+    image.src = profile.imageDataUrl;
+    image.alt = "";
+    avatar.append(image);
+    return avatar;
+  }
+
+  avatar.textContent = getInitials(profile.name);
+  return avatar;
 }
 
 function getInitials(name) {
@@ -546,14 +639,44 @@ function unlockProfile(profile) {
   showApp(activeSession, profile);
 }
 
+function renderProfileImagePreview(dataUrl, name = "") {
+  profileImagePreview.replaceChildren();
+  profileImagePreview.classList.toggle("has-image", Boolean(dataUrl));
+
+  if (dataUrl) {
+    const image = document.createElement("img");
+    image.src = dataUrl;
+    image.alt = "";
+    profileImagePreview.append(image);
+    return;
+  }
+
+  profileImagePreview.textContent = getInitials(name || profileNameInput.value || "CH");
+}
+
+function syncProfilePinField() {
+  const enabled = profilePinToggle.checked;
+  profilePinWrap.hidden = !enabled;
+  profilePinInput.disabled = !enabled;
+  if (!enabled) {
+    profilePinInput.value = "";
+  }
+}
+
 function openProfileModal(profile = null) {
   editingProfileId = profile?.id || null;
   profileModalTitle.textContent = profile ? "Editar tela" : "Nova tela";
   profileNameInput.value = profile?.name || "";
+  profileImageInput.value = "";
+  profileImageDataUrl = profile?.imageDataUrl || null;
+  removeProfileImage = false;
+  renderProfileImagePreview(profileImageDataUrl, profile?.name || "");
+  profilePinToggle.checked = Boolean(profile?.hasPin);
+  syncProfilePinField();
   profilePinInput.value = "";
   profileFormMessage.textContent = profile?.hasPin
-    ? "Deixe o PIN vazio para manter o PIN atual."
-    : "PIN opcional: use 4 numeros se quiser bloquear a tela.";
+    ? "PIN ligado: deixe vazio para manter ou digite outro. Desmarque para remover."
+    : "PIN desligado. Marque a opcao se quiser proteger esta tela.";
   profileFormMessage.classList.remove("is-error");
   profileModal.hidden = false;
   profileNameInput.focus();
@@ -561,8 +684,12 @@ function openProfileModal(profile = null) {
 
 function closeProfileModal() {
   editingProfileId = null;
+  profileImageDataUrl = null;
+  removeProfileImage = false;
   profileModal.hidden = true;
   profileForm.reset();
+  syncProfilePinField();
+  renderProfileImagePreview(null);
   profileFormMessage.textContent = "";
 }
 
@@ -601,6 +728,44 @@ loginTab.addEventListener("click", () => switchAuthTab("login"));
 signupTab.addEventListener("click", () => switchAuthTab("signup"));
 addProfileButton.addEventListener("click", () => openProfileModal());
 cancelProfileButton.addEventListener("click", closeProfileModal);
+profilePinToggle.addEventListener("change", () => {
+  syncProfilePinField();
+  profileFormMessage.textContent = profilePinToggle.checked
+    ? "Digite um PIN de 4 numeros para bloquear esta tela."
+    : "PIN desligado para esta tela.";
+  profileFormMessage.classList.remove("is-error");
+});
+profileNameInput.addEventListener("input", () => {
+  if (!profileImageDataUrl) {
+    renderProfileImagePreview(null, profileNameInput.value);
+  }
+});
+profileImageInput.addEventListener("change", async () => {
+  const file = profileImageInput.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  profileFormMessage.textContent = "Preparando foto...";
+  profileFormMessage.classList.remove("is-error");
+
+  try {
+    profileImageDataUrl = await compressImageFile(file, 360, 0.78);
+    removeProfileImage = false;
+    renderProfileImagePreview(profileImageDataUrl, profileNameInput.value);
+    profileFormMessage.textContent = "Foto pronta para salvar.";
+  } catch (error) {
+    profileImageInput.value = "";
+    profileFormMessage.textContent = error.message || "Nao foi possivel carregar a foto.";
+    profileFormMessage.classList.add("is-error");
+  }
+});
+removeProfileImageButton.addEventListener("click", () => {
+  profileImageInput.value = "";
+  profileImageDataUrl = null;
+  removeProfileImage = true;
+  renderProfileImagePreview(null, profileNameInput.value);
+});
 cancelPinButton.addEventListener("click", () => {
   pendingPinProfile = null;
   pinModal.hidden = true;
@@ -675,6 +840,8 @@ profileForm.addEventListener("submit", async (event) => {
 
   const name = profileNameInput.value.trim();
   const pin = profilePinInput.value.trim();
+  const pinEnabled = profilePinToggle.checked;
+  const editingProfile = profiles.find((profile) => profile.id === editingProfileId);
 
   if (!name) {
     profileFormMessage.textContent = "Informe o nome da tela.";
@@ -682,7 +849,13 @@ profileForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  if (pin && !/^\d{4}$/.test(pin)) {
+  if (pinEnabled && !pin && !editingProfile?.hasPin) {
+    profileFormMessage.textContent = "Digite um PIN de 4 numeros ou desmarque a opcao de PIN.";
+    profileFormMessage.classList.add("is-error");
+    return;
+  }
+
+  if (pinEnabled && pin && !/^\d{4}$/.test(pin)) {
     profileFormMessage.textContent = "O PIN deve ter 4 numeros.";
     profileFormMessage.classList.add("is-error");
     return;
@@ -690,9 +863,19 @@ profileForm.addEventListener("submit", async (event) => {
 
   try {
     if (editingProfileId) {
-      await updateProfile(editingProfileId, { name, pin });
+      await updateProfile(editingProfileId, {
+        name,
+        pin,
+        pinEnabled,
+        imageDataUrl: profileImageDataUrl,
+        removeImage: removeProfileImage,
+      });
     } else {
-      await createProfile({ name, pin });
+      await createProfile({
+        name,
+        pin: pinEnabled ? pin : "",
+        imageDataUrl: profileImageDataUrl,
+      });
     }
 
     closeProfileModal();
@@ -723,6 +906,9 @@ pinForm.addEventListener("submit", async (event) => {
 window.AppFilmesAuth = {
   getSession: readSession,
   getProfile: () => activeProfile || readUnlockedProfile(),
+  getToken: () => readSession()?.token || null,
+  request: requestAuth,
+  compressImageFile,
   usesRemoteAuth,
 };
 

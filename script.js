@@ -12,8 +12,17 @@ const recentList = document.querySelector("#recentList");
 const autoPlay = document.querySelector("#autoPlay");
 const preferEmbed = document.querySelector("#preferEmbed");
 const playerMode = document.querySelector("#playerMode");
+const mediaForm = document.querySelector("#mediaForm");
+const mediaTitleInput = document.querySelector("#mediaTitleInput");
+const mediaCategoryInput = document.querySelector("#mediaCategoryInput");
+const mediaUrlInput = document.querySelector("#mediaUrlInput");
+const mediaPosterInput = document.querySelector("#mediaPosterInput");
+const mediaMessage = document.querySelector("#mediaMessage");
+const mediaShelves = document.querySelector("#mediaShelves");
+const libraryProfileName = document.querySelector("#libraryProfileName");
 
 const RECENT_KEY = "appfilmes:recent-links";
+const MEDIA_LIBRARY_KEY = "appfilmes:media-library";
 const DIRECT_VIDEO_EXTENSIONS = [
   "mp4",
   "webm",
@@ -28,11 +37,23 @@ const DIRECT_VIDEO_EXTENSIONS = [
   "ts",
 ];
 const TORRENT_VIDEO_EXTENSIONS = ["mp4", "m4v", "webm", "mkv", "mov", "ogv", "ogg"];
+const WEBTORRENT_TRACKERS = [
+  "wss://tracker.openwebtorrent.com",
+  "wss://tracker.btorrent.xyz",
+  "wss://tracker.webtorrent.dev",
+];
+const MEDIA_CATEGORIES = [
+  { id: "filmes", label: "Filmes" },
+  { id: "series", label: "Series" },
+  { id: "animes", label: "Animes" },
+  { id: "outros", label: "Outros" },
+];
 
 let hlsInstance = null;
 let dashInstance = null;
 let torrentClient = null;
 let activeTorrent = null;
+let mediaItems = [];
 
 function getRecentStorageKey() {
   const session = window.AppFilmesAuth?.getSession?.();
@@ -40,6 +61,18 @@ function getRecentStorageKey() {
   const userId = session?.user?.id || "guest";
   const profileId = profile?.id || "default";
   return `${RECENT_KEY}:${userId}:${profileId}`;
+}
+
+function getMediaStorageKey() {
+  const session = window.AppFilmesAuth?.getSession?.();
+  const profile = window.AppFilmesAuth?.getProfile?.();
+  const userId = session?.user?.id || "guest";
+  const profileId = profile?.id || "default";
+  return `${MEDIA_LIBRARY_KEY}:${userId}:${profileId}`;
+}
+
+function getActiveProfile() {
+  return window.AppFilmesAuth?.getProfile?.() || null;
 }
 
 function setStatus(mode, message, isError = false) {
@@ -85,6 +118,25 @@ function normalizeUrl(rawUrl) {
 
 function isMagnetLink(value) {
   return /^magnet:/i.test(value.trim());
+}
+
+function isTorrentUrl(url) {
+  return getExtension(url) === "torrent";
+}
+
+function enhanceMagnetTrackers(magnetLink) {
+  const hasWebRtcTracker = WEBTORRENT_TRACKERS.some((tracker) =>
+    magnetLink.toLowerCase().includes(encodeURIComponent(tracker).toLowerCase()) ||
+    magnetLink.toLowerCase().includes(tracker.toLowerCase()),
+  );
+
+  if (hasWebRtcTracker) {
+    return magnetLink;
+  }
+
+  const separator = magnetLink.includes("?") ? "&" : "?";
+  const announce = WEBTORRENT_TRACKERS.map((tracker) => `tr=${encodeURIComponent(tracker)}`).join("&");
+  return `${magnetLink}${separator}${announce}`;
 }
 
 function getExtension(url) {
@@ -201,7 +253,7 @@ function getVideoTorrentFile(torrent) {
     .sort((a, b) => b.length - a.length)[0];
 }
 
-async function loadTorrentVideo(magnetLink) {
+async function loadTorrentVideo(torrentId) {
   resetPlayers();
   showVideo();
 
@@ -210,15 +262,16 @@ async function loadTorrentVideo(magnetLink) {
   }
 
   torrentClient = new WebTorrent();
-  setStatus("Torrent", "Conectando aos peers via WebTorrent...");
+  const safeTorrentId = isMagnetLink(torrentId) ? enhanceMagnetTrackers(torrentId) : torrentId;
+  setStatus("Torrent", "Conectando aos peers WebRTC e lendo arquivos do torrent...");
 
   await new Promise((resolve, reject) => {
     const timeoutId = window.setTimeout(() => {
-      reject(new Error("Nao encontrei peers WebTorrent a tempo. Esse magnet pode nao ter tracker WebRTC ativo."));
+      reject(new Error("Nao encontrei peers WebTorrent. Magnets com apenas trackers UDP/classicos nao tocam direto no navegador."));
     }, 45000);
 
     torrentClient.on("error", reject);
-    activeTorrent = torrentClient.add(magnetLink, (torrent) => {
+    activeTorrent = torrentClient.add(safeTorrentId, { announce: WEBTORRENT_TRACKERS }, (torrent) => {
       window.clearTimeout(timeoutId);
 
       const file = getVideoTorrentFile(torrent);
@@ -254,6 +307,12 @@ async function reproduzirMidia(urlOuMagnet) {
   const extension = getExtension(url);
   const forcedMode = playerMode.value;
 
+  if (forcedMode === "torrent") {
+    await loadTorrentVideo(url.href);
+    addRecent(url, "Torrent");
+    return;
+  }
+
   if (forcedMode === "direct") {
     await loadDirectVideo(url);
     addRecent(url, "Direto");
@@ -287,6 +346,12 @@ async function reproduzirMidia(urlOuMagnet) {
   if (extension === "mpd") {
     await loadDash(url);
     addRecent(url, "DASH");
+    return;
+  }
+
+  if (isTorrentUrl(url)) {
+    await loadTorrentVideo(url.href);
+    addRecent(url, "Torrent");
     return;
   }
 
@@ -539,6 +604,220 @@ function renderRecent() {
   });
 }
 
+function setMediaMessage(message, isError = false) {
+  if (!mediaMessage) {
+    return;
+  }
+
+  mediaMessage.textContent = message;
+  mediaMessage.classList.toggle("is-error", isError);
+}
+
+function getLocalMedia() {
+  try {
+    return JSON.parse(localStorage.getItem(getMediaStorageKey())) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalMedia(items) {
+  localStorage.setItem(getMediaStorageKey(), JSON.stringify(items));
+}
+
+async function listMediaItems() {
+  const profile = getActiveProfile();
+  if (!profile) {
+    return [];
+  }
+
+  if (window.AppFilmesAuth?.usesRemoteAuth?.()) {
+    const data = await window.AppFilmesAuth.request(`/api/media?profileId=${encodeURIComponent(profile.id)}`, {
+      token: window.AppFilmesAuth.getToken(),
+    });
+    return data.media || [];
+  }
+
+  return getLocalMedia();
+}
+
+async function createMediaItem(fields) {
+  if (window.AppFilmesAuth?.usesRemoteAuth?.()) {
+    const data = await window.AppFilmesAuth.request("/api/media", {
+      token: window.AppFilmesAuth.getToken(),
+      payload: fields,
+    });
+    return data.media;
+  }
+
+  const now = new Date().toISOString();
+  const item = {
+    id: crypto.randomUUID(),
+    ...fields,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const next = [item, ...getLocalMedia()];
+  saveLocalMedia(next);
+  return item;
+}
+
+async function removeMediaItem(id) {
+  if (window.AppFilmesAuth?.usesRemoteAuth?.()) {
+    await window.AppFilmesAuth.request(`/api/media/${encodeURIComponent(id)}`, {
+      token: window.AppFilmesAuth.getToken(),
+      method: "DELETE",
+    });
+    return;
+  }
+
+  saveLocalMedia(getLocalMedia().filter((item) => item.id !== id));
+}
+
+function categoryLabel(categoryId) {
+  return MEDIA_CATEGORIES.find((category) => category.id === categoryId)?.label || "Outros";
+}
+
+function createPosterElement(item) {
+  const poster = document.createElement("button");
+  poster.type = "button";
+  poster.className = "media-card-poster";
+  poster.title = `Assistir ${item.title}`;
+
+  if (item.posterDataUrl) {
+    const image = document.createElement("img");
+    image.src = item.posterDataUrl;
+    image.alt = "";
+    poster.append(image);
+  } else {
+    const logo = document.createElement("img");
+    logo.className = "media-card-logo";
+    logo.src = "assets/logo-cinehub.png";
+    logo.alt = "";
+    poster.append(logo);
+  }
+
+  poster.addEventListener("click", () => playMediaItem(item));
+  return poster;
+}
+
+function renderMediaLibrary() {
+  if (!mediaShelves) {
+    return;
+  }
+
+  const profile = getActiveProfile();
+  libraryProfileName.textContent = profile ? profile.name : "Escolha uma tela";
+  mediaShelves.replaceChildren();
+
+  if (!profile) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Escolha uma tela para montar sua biblioteca.";
+    mediaShelves.append(empty);
+    return;
+  }
+
+  if (!mediaItems.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Nenhum filme ou serie adicionado nesta tela.";
+    mediaShelves.append(empty);
+    return;
+  }
+
+  MEDIA_CATEGORIES.forEach((category) => {
+    const items = mediaItems.filter((item) => item.category === category.id);
+    if (!items.length) {
+      return;
+    }
+
+    const shelf = document.createElement("section");
+    shelf.className = "media-shelf";
+
+    const title = document.createElement("h3");
+    title.textContent = category.label;
+
+    const row = document.createElement("div");
+    row.className = "media-row";
+
+    items.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "media-card";
+
+      const poster = createPosterElement(item);
+      const body = document.createElement("div");
+      body.className = "media-card-body";
+
+      const itemTitle = document.createElement("strong");
+      itemTitle.textContent = item.title;
+
+      const itemMeta = document.createElement("span");
+      itemMeta.textContent = categoryLabel(item.category);
+
+      const actions = document.createElement("div");
+      actions.className = "media-card-actions";
+
+      const playButton = document.createElement("button");
+      playButton.type = "button";
+      playButton.textContent = "Assistir";
+      playButton.addEventListener("click", () => playMediaItem(item));
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.textContent = "Apagar";
+      deleteButton.addEventListener("click", async () => {
+        const confirmed = window.confirm(`Apagar "${item.title}" da biblioteca?`);
+        if (!confirmed) {
+          return;
+        }
+
+        try {
+          await removeMediaItem(item.id);
+          await loadMediaLibrary();
+        } catch (error) {
+          setMediaMessage(error.message || "Nao foi possivel apagar.", true);
+        }
+      });
+
+      actions.append(playButton, deleteButton);
+      body.append(itemTitle, itemMeta, actions);
+      card.append(poster, body);
+      row.append(card);
+    });
+
+    shelf.append(title, row);
+    mediaShelves.append(shelf);
+  });
+}
+
+async function loadMediaLibrary() {
+  const profile = getActiveProfile();
+  mediaItems = [];
+
+  if (!profile) {
+    renderMediaLibrary();
+    return;
+  }
+
+  setMediaMessage("Carregando biblioteca...");
+
+  try {
+    mediaItems = await listMediaItems();
+    renderMediaLibrary();
+    setMediaMessage("");
+  } catch (error) {
+    renderMediaLibrary();
+    setMediaMessage(error.message || "Nao foi possivel carregar a biblioteca.", true);
+  }
+}
+
+function playMediaItem(item) {
+  input.value = item.url;
+  setMediaMessage(`Abrindo ${item.title}...`);
+  handleLoad(item.url);
+}
+
 async function handleLoad(rawUrl) {
   try {
     await reproduzirMidia(rawUrl);
@@ -551,6 +830,47 @@ async function handleLoad(rawUrl) {
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   handleLoad(input.value);
+});
+
+mediaForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const profile = getActiveProfile();
+  if (!profile) {
+    setMediaMessage("Escolha uma tela antes de adicionar filmes ou series.", true);
+    return;
+  }
+
+  const title = mediaTitleInput.value.trim();
+  const url = mediaUrlInput.value.trim();
+
+  if (!title || !url) {
+    setMediaMessage("Informe nome e link.", true);
+    return;
+  }
+
+  setMediaMessage("Salvando na biblioteca...");
+
+  try {
+    const posterFile = mediaPosterInput.files?.[0] || null;
+    const posterDataUrl = posterFile
+      ? await window.AppFilmesAuth.compressImageFile(posterFile, 520, 0.76)
+      : null;
+
+    await createMediaItem({
+      profileId: profile.id,
+      title,
+      category: mediaCategoryInput.value,
+      url,
+      ...(posterDataUrl ? { posterDataUrl } : {}),
+    });
+
+    mediaForm.reset();
+    await loadMediaLibrary();
+    setMediaMessage("Item adicionado.");
+  } catch (error) {
+    setMediaMessage(error.message || "Nao foi possivel adicionar esse item.", true);
+  }
 });
 
 pasteButton.addEventListener("click", async () => {
@@ -566,7 +886,7 @@ pasteButton.addEventListener("click", async () => {
 clearButton.addEventListener("click", () => {
   input.value = "";
   resetPlayers();
-  setStatus("Aguardando link", "Pronto para carregar videos diretos, HLS, DASH e embeds permitidos.");
+  setStatus("Aguardando link", "Pronto para videos diretos, HLS, DASH, embeds, magnet e .torrent.");
   input.focus();
 });
 
@@ -585,11 +905,13 @@ window.addEventListener("appfilmes:auth-change", (event) => {
   if (!event.detail.session) {
     resetPlayers();
     setStatus("Aguardando link", "Entre na sua conta para carregar videos.");
+    loadMediaLibrary();
   }
 });
 
 window.addEventListener("appfilmes:profile-change", (event) => {
   renderRecent();
+  loadMediaLibrary();
 
   if (!event.detail.profile) {
     resetPlayers();
@@ -598,5 +920,6 @@ window.addEventListener("appfilmes:profile-change", (event) => {
 });
 
 renderRecent();
+loadMediaLibrary();
 
 window.reproduzirMidia = reproduzirMidia;

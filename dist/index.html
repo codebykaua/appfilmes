@@ -3,15 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AppFilmes - Player por Link</title>
+    <title>CineHub - Player por Link</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <section id="authScreen" class="auth-screen" aria-label="Acesso ao AppFilmes">
       <div class="auth-hero">
         <div class="brand-lockup">
-          <span class="brand-mark" aria-hidden="true">AF</span>
-          <span>AppFilmes</span>
+          <img class="brand-logo" src="assets/logo-cinehub.png" alt="" />
+          <span>CineHub</span>
         </div>
         <h1>Player privado por link</h1>
         <p>Entre na sua conta para manter seus links recentes separados e preparar o app para salvar usuarios na Cloudflare.</p>
@@ -81,9 +81,9 @@
     <section id="profileScreen" class="profile-screen" hidden aria-label="Escolha de tela">
       <header class="profile-topbar">
         <div class="topbar-brand">
-          <span class="brand-mark small" aria-hidden="true">AF</span>
+          <img class="brand-logo small" src="assets/logo-cinehub.png" alt="" />
           <div>
-            <strong>AppFilmes</strong>
+            <strong>CineHub</strong>
             <span id="profileAccountName">Conta</span>
           </div>
         </div>
@@ -109,11 +109,28 @@
           <span>Nome da tela</span>
           <input id="profileNameInput" name="name" type="text" maxlength="32" placeholder="Ex: Kaua, Sala, Kids" required />
         </label>
-        <label>
-          <span>PIN opcional</span>
+
+        <div class="image-picker">
+          <div id="profileImagePreview" class="image-preview" aria-hidden="true">CH</div>
+          <div class="image-picker-actions">
+            <label class="file-button" for="profileImageInput">
+              <span>Adicionar foto</span>
+              <input id="profileImageInput" name="image" type="file" accept="image/*" />
+            </label>
+            <button id="removeProfileImageButton" type="button">Remover foto</button>
+          </div>
+        </div>
+
+        <label class="toggle-row" for="profilePinToggle">
+          <input id="profilePinToggle" type="checkbox" />
+          <span>Colocar PIN?</span>
+        </label>
+
+        <label id="profilePinWrap" hidden>
+          <span>PIN da tela</span>
           <input id="profilePinInput" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="4 numeros" />
         </label>
-        <p class="modal-note">Deixe o PIN vazio para tela sem bloqueio. Ao editar, vazio mantem o PIN atual.</p>
+        <p class="modal-note">O PIN e opcional. Ao editar, desmarque para remover o PIN ou informe um novo PIN de 4 numeros.</p>
         <p id="profileFormMessage" class="profile-message" aria-live="polite"></p>
         <div class="modal-actions">
           <button id="cancelProfileButton" type="button">Cancelar</button>
@@ -143,9 +160,9 @@
     <main id="appShell" class="app-shell" hidden>
       <header class="app-topbar">
         <div class="topbar-brand">
-          <span class="brand-mark small" aria-hidden="true">AF</span>
+          <img class="brand-logo small" src="assets/logo-cinehub.png" alt="" />
           <div>
-            <strong>AppFilmes</strong>
+            <strong>CineHub</strong>
             <span>Player privado</span>
           </div>
         </div>
@@ -160,8 +177,9 @@
       <section class="player-column" aria-label="Player de video">
         <div class="video-stage">
           <div id="emptyState" class="empty-state">
+            <img class="empty-logo" src="assets/logo-cinehub.png" alt="" />
             <span class="empty-icon" aria-hidden="true">&#9658;</span>
-            <h1>AppFilmes</h1>
+            <h1>CineHub</h1>
             <p>Cole um link de video e assista aqui dentro.</p>
           </div>
           <video id="videoPlayer" class="media-player" controls playsinline></video>
@@ -206,6 +224,7 @@
             <option value="hls">Forcar HLS .m3u8</option>
             <option value="dash">Forcar DASH .mpd</option>
             <option value="embed">Forcar embed/iframe</option>
+            <option value="torrent">Forcar torrent/magnet</option>
           </select>
         </label>
 
@@ -230,7 +249,7 @@
           <p>
             MP4, WebM, OGG, MOV compativel com o navegador, HLS (.m3u8), DASH (.mpd),
             YouTube, Vimeo, Dailymotion, XVideos, XHamster e iframe quando o site permitir.
-            Magnet/torrent via WebTorrent quando houver peers WebRTC disponiveis.
+            Magnet e .torrent via WebTorrent quando houver peers WebRTC disponiveis.
           </p>
         </section>
 
@@ -244,6 +263,44 @@
           </div>
         </section>
       </aside>
+
+      <section class="library-panel" aria-label="Biblioteca da tela">
+        <div class="library-head">
+          <div>
+            <p>Biblioteca</p>
+            <h2>Adicionar filmes e series</h2>
+          </div>
+          <span id="libraryProfileName">Escolha uma tela</span>
+        </div>
+
+        <form id="mediaForm" class="media-form" autocomplete="off">
+          <label>
+            <span>Nome</span>
+            <input id="mediaTitleInput" name="title" type="text" maxlength="80" placeholder="Ex: Filme, serie, episodio" required />
+          </label>
+          <label>
+            <span>Categoria</span>
+            <select id="mediaCategoryInput" name="category">
+              <option value="filmes">Filmes</option>
+              <option value="series">Series</option>
+              <option value="animes">Animes</option>
+              <option value="outros">Outros</option>
+            </select>
+          </label>
+          <label class="media-link-field">
+            <span>Link</span>
+            <input id="mediaUrlInput" name="url" type="text" inputmode="url" placeholder="https://... ou magnet:?xt=..." required />
+          </label>
+          <label class="file-button poster-button" for="mediaPosterInput">
+            <span>Capa opcional</span>
+            <input id="mediaPosterInput" name="poster" type="file" accept="image/*" />
+          </label>
+          <button class="primary-action" type="submit">Adicionar</button>
+        </form>
+
+        <p id="mediaMessage" class="profile-message" aria-live="polite"></p>
+        <div id="mediaShelves" class="media-shelves" aria-live="polite"></div>
+      </section>
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/webtorrent@latest/webtorrent.min.js" defer></script>

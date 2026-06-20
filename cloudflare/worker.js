@@ -1,8 +1,10 @@
-const MAX_JSON_BYTES = 12_000;
+const MAX_JSON_BYTES = 280_000;
 const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 const PROFILE_LIMIT = 5;
 const PROFILE_COLORS = ["#35d3b4", "#22aee8", "#f7c66a", "#ff7f8f", "#9d7cff"];
 const PBKDF2_ITERATIONS = 100000;
+const IMAGE_DATA_URL_MAX_LENGTH = 180_000;
+const MEDIA_CATEGORIES = new Set(["filmes", "series", "animes", "outros"]);
 
 export default {
   async fetch(request, env, ctx) {
@@ -53,6 +55,23 @@ export default {
       const pinMatch = url.pathname.match(/^\/api\/profiles\/([^/]+)\/verify-pin$/);
       if (pinMatch && request.method === "POST") {
         return await handleVerifyProfilePin(request, env, pinMatch[1]);
+      }
+
+      if (url.pathname === "/api/media" && request.method === "GET") {
+        return await handleListMedia(request, env, url);
+      }
+
+      if (url.pathname === "/api/media" && request.method === "POST") {
+        return await handleCreateMedia(request, env);
+      }
+
+      const mediaMatch = url.pathname.match(/^\/api\/media\/([^/]+)$/);
+      if (mediaMatch && request.method === "PATCH") {
+        return await handleUpdateMedia(request, env, mediaMatch[1]);
+      }
+
+      if (mediaMatch && request.method === "DELETE") {
+        return await handleDeleteMedia(request, env, mediaMatch[1]);
       }
 
       return json(request, { message: "Rota nao encontrada." }, 404);
@@ -173,7 +192,7 @@ async function handleListProfiles(request, env) {
   }
 
   const { results } = await env.DB.prepare(
-    "SELECT id, name, pin_hash, color, created_at, updated_at FROM profiles WHERE user_id = ? ORDER BY created_at ASC",
+    "SELECT id, name, pin_hash, color, image_data_url, created_at, updated_at FROM profiles WHERE user_id = ? ORDER BY created_at ASC",
   )
     .bind(session.user.id)
     .all();
@@ -194,6 +213,7 @@ async function handleCreateProfile(request, env) {
   const body = await readJson(request);
   const name = cleanText(body.name).slice(0, 32);
   const pin = cleanPin(body.pin);
+  const imageDataUrl = cleanImageDataUrl(body.imageDataUrl, "Foto da tela");
   const now = new Date().toISOString();
 
   if (!name) {
@@ -222,14 +242,15 @@ async function handleCreateProfile(request, env) {
     name,
     hasPin: Boolean(pinHash),
     color,
+    imageDataUrl,
     createdAt: now,
     updatedAt: now,
   };
 
   await env.DB.prepare(
-    "INSERT INTO profiles (id, user_id, name, pin_hash, pin_salt, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO profiles (id, user_id, name, pin_hash, pin_salt, color, image_data_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   )
-    .bind(profile.id, profile.userId, profile.name, pinHash, pinSalt, profile.color, now, now)
+    .bind(profile.id, profile.userId, profile.name, pinHash, pinSalt, profile.color, imageDataUrl, now, now)
     .run();
 
   return json(request, { profile }, 201);
@@ -251,6 +272,13 @@ async function handleUpdateProfile(request, env, profileId) {
   const name = body.name === undefined ? profile.name : cleanText(body.name).slice(0, 32);
   const wantsPinChange = body.pin !== undefined;
   const pin = wantsPinChange ? cleanPin(body.pin) : null;
+  const wantsImageChange = body.imageDataUrl !== undefined || body.removeImage === true;
+  const imageDataUrl =
+    body.removeImage === true
+      ? null
+      : body.imageDataUrl !== undefined
+        ? cleanImageDataUrl(body.imageDataUrl, "Foto da tela")
+        : profile.image_data_url || null;
 
   if (!name) {
     return json(request, { message: "Informe o nome da tela." }, 400);
@@ -265,9 +293,9 @@ async function handleUpdateProfile(request, env, profileId) {
   const now = new Date().toISOString();
 
   await env.DB.prepare(
-    "UPDATE profiles SET name = ?, pin_hash = ?, pin_salt = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+    "UPDATE profiles SET name = ?, pin_hash = ?, pin_salt = ?, image_data_url = ?, updated_at = ? WHERE id = ? AND user_id = ?",
   )
-    .bind(name, pinHash, pinSalt, now, profileId, session.user.id)
+    .bind(name, pinHash, pinSalt, wantsImageChange ? imageDataUrl : profile.image_data_url || null, now, profileId, session.user.id)
     .run();
 
   const updated = await getOwnedProfile(env, session.user.id, profileId);
@@ -316,6 +344,133 @@ async function handleVerifyProfilePin(request, env, profileId) {
   return json(request, { ok: true, profile: publicProfile(profile) });
 }
 
+async function handleListMedia(request, env, url) {
+  const session = await getSessionUser(request, env);
+
+  if (!session) {
+    return json(request, { message: "Sessao invalida ou expirada." }, 401);
+  }
+
+  const profileId = String(url.searchParams.get("profileId") || "").trim();
+  if (!profileId) {
+    return json(request, { message: "Informe a tela para carregar a biblioteca." }, 400);
+  }
+
+  const profile = await getOwnedProfile(env, session.user.id, profileId);
+  if (!profile) {
+    return json(request, { message: "Tela nao encontrada." }, 404);
+  }
+
+  const { results } = await env.DB.prepare(
+    `SELECT id, profile_id, title, category, url, poster_data_url, created_at, updated_at
+     FROM media_items
+     WHERE user_id = ? AND profile_id = ?
+     ORDER BY created_at DESC`,
+  )
+    .bind(session.user.id, profileId)
+    .all();
+
+  return json(request, { media: results.map(publicMedia) });
+}
+
+async function handleCreateMedia(request, env) {
+  const session = await getSessionUser(request, env);
+
+  if (!session) {
+    return json(request, { message: "Sessao invalida ou expirada." }, 401);
+  }
+
+  const body = await readJson(request);
+  const profileId = String(body.profileId || "").trim();
+  const profile = profileId ? await getOwnedProfile(env, session.user.id, profileId) : null;
+
+  if (!profile) {
+    return json(request, { message: "Tela nao encontrada." }, 404);
+  }
+
+  const title = cleanText(body.title).slice(0, 80);
+  const category = cleanCategory(body.category);
+  const mediaUrl = cleanMediaUrl(body.url);
+  const posterDataUrl = cleanImageDataUrl(body.posterDataUrl, "Capa");
+
+  if (!title) {
+    return json(request, { message: "Informe o nome do filme ou serie." }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const media = {
+    id: crypto.randomUUID(),
+    profileId,
+    title,
+    category,
+    url: mediaUrl,
+    posterDataUrl,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await env.DB.prepare(
+    `INSERT INTO media_items
+       (id, user_id, profile_id, title, category, url, poster_data_url, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(media.id, session.user.id, media.profileId, title, category, mediaUrl, posterDataUrl, now, now)
+    .run();
+
+  return json(request, { media }, 201);
+}
+
+async function handleUpdateMedia(request, env, mediaId) {
+  const session = await getSessionUser(request, env);
+
+  if (!session) {
+    return json(request, { message: "Sessao invalida ou expirada." }, 401);
+  }
+
+  const current = await getOwnedMedia(env, session.user.id, mediaId);
+  if (!current) {
+    return json(request, { message: "Item nao encontrado." }, 404);
+  }
+
+  const body = await readJson(request);
+  const title = body.title === undefined ? current.title : cleanText(body.title).slice(0, 80);
+  const category = body.category === undefined ? current.category : cleanCategory(body.category);
+  const mediaUrl = body.url === undefined ? current.url : cleanMediaUrl(body.url);
+  const posterDataUrl =
+    body.removePoster === true
+      ? null
+      : body.posterDataUrl !== undefined
+        ? cleanImageDataUrl(body.posterDataUrl, "Capa")
+        : current.poster_data_url || null;
+
+  if (!title) {
+    return json(request, { message: "Informe o nome do filme ou serie." }, 400);
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE media_items
+     SET title = ?, category = ?, url = ?, poster_data_url = ?, updated_at = ?
+     WHERE id = ? AND user_id = ?`,
+  )
+    .bind(title, category, mediaUrl, posterDataUrl, now, mediaId, session.user.id)
+    .run();
+
+  const updated = await getOwnedMedia(env, session.user.id, mediaId);
+  return json(request, { media: publicMedia(updated) });
+}
+
+async function handleDeleteMedia(request, env, mediaId) {
+  const session = await getSessionUser(request, env);
+
+  if (!session) {
+    return json(request, { message: "Sessao invalida ou expirada." }, 401);
+  }
+
+  await env.DB.prepare("DELETE FROM media_items WHERE id = ? AND user_id = ?").bind(mediaId, session.user.id).run();
+  return json(request, { ok: true });
+}
+
 async function createSession(env, userId) {
   const token = createRandomToken(32);
   const now = new Date();
@@ -354,9 +509,19 @@ async function getSessionUser(request, env) {
 
 async function getOwnedProfile(env, userId, profileId) {
   return env.DB.prepare(
-    "SELECT id, name, pin_hash, pin_salt, color, created_at, updated_at FROM profiles WHERE id = ? AND user_id = ?",
+    "SELECT id, name, pin_hash, pin_salt, color, image_data_url, created_at, updated_at FROM profiles WHERE id = ? AND user_id = ?",
   )
     .bind(profileId, userId)
+    .first();
+}
+
+async function getOwnedMedia(env, userId, mediaId) {
+  return env.DB.prepare(
+    `SELECT id, profile_id, title, category, url, poster_data_url, created_at, updated_at
+     FROM media_items
+     WHERE id = ? AND user_id = ?`,
+  )
+    .bind(mediaId, userId)
     .first();
 }
 
@@ -455,6 +620,20 @@ function publicProfile(record) {
     name: record.name,
     hasPin: Boolean(record.pin_hash),
     color: record.color,
+    imageDataUrl: record.image_data_url || null,
+    createdAt: record.created_at || record.createdAt,
+    updatedAt: record.updated_at || record.updatedAt,
+  };
+}
+
+function publicMedia(record) {
+  return {
+    id: record.id,
+    profileId: record.profile_id || record.profileId,
+    title: record.title,
+    category: record.category,
+    url: record.url,
+    posterDataUrl: record.poster_data_url || record.posterDataUrl || null,
     createdAt: record.created_at || record.createdAt,
     updatedAt: record.updated_at || record.updatedAt,
   };
@@ -467,6 +646,53 @@ function cleanText(value) {
 function cleanPin(value) {
   const pin = String(value || "").trim();
   return /^\d{4}$/.test(pin) ? pin : "";
+}
+
+function cleanCategory(value) {
+  const category = String(value || "").trim().toLowerCase();
+  if (!MEDIA_CATEGORIES.has(category)) {
+    throw new HttpError("Categoria invalida.", 400);
+  }
+  return category;
+}
+
+function cleanMediaUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    throw new HttpError("Informe o link da midia.", 400);
+  }
+
+  if (/^magnet:/i.test(text)) {
+    return text;
+  }
+
+  try {
+    const withProtocol = /^[a-z][a-z0-9+.-]*:/i.test(text) ? text : `https://${text}`;
+    const url = new URL(withProtocol);
+    if (!["http:", "https:"].includes(url.protocol)) {
+      throw new Error("invalid_protocol");
+    }
+    return url.href;
+  } catch {
+    throw new HttpError("Use um link http, https, .torrent ou magnet valido.", 400);
+  }
+}
+
+function cleanImageDataUrl(value, label) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const image = String(value).trim();
+  if (image.length > IMAGE_DATA_URL_MAX_LENGTH) {
+    throw new HttpError(`${label} muito grande. Use uma imagem menor.`, 413);
+  }
+
+  if (!/^data:image\/(png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(image)) {
+    throw new HttpError(`${label} invalida.`, 400);
+  }
+
+  return image.replace(/^data:image\/jpg/i, "data:image/jpeg");
 }
 
 function normalizeEmail(value) {
