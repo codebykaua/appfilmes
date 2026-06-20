@@ -236,14 +236,21 @@ function publicUser(user) {
 }
 
 async function requestAuth(path, { payload, token, method } = {}) {
-  const response = await fetch(`${AUTH_API_BASE}${path}`, {
-    method: method || (payload ? "POST" : "GET"),
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: payload ? JSON.stringify(payload) : undefined,
-  });
+  let response;
+
+  try {
+    response = await fetch(`${AUTH_API_BASE}${path}`, {
+      method: method || (payload ? "POST" : "GET"),
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
+  } catch {
+    throw new Error("Nao consegui conectar na API. Confira se o api-config.js esta publicado e se o Worker esta online.");
+  }
+
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {

@@ -230,7 +230,7 @@
           <p>
             MP4, WebM, OGG, MOV compativel com o navegador, HLS (.m3u8), DASH (.mpd),
             YouTube, Vimeo, Dailymotion, XVideos, XHamster e iframe quando o site permitir.
-            Magnet/torrent nao toca direto no navegador.
+            Magnet/torrent via WebTorrent quando houver peers WebRTC disponiveis.
           </p>
         </section>
 
@@ -246,6 +246,7 @@
       </aside>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/webtorrent@latest/webtorrent.min.js" defer></script>
     <script src="api-config.js" defer></script>
     <script src="auth.js" defer></script>
     <script src="script.js" defer></script>

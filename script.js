@@ -27,9 +27,12 @@ const DIRECT_VIDEO_EXTENSIONS = [
   "flv",
   "ts",
 ];
+const TORRENT_VIDEO_EXTENSIONS = ["mp4", "m4v", "webm", "mkv", "mov", "ogv", "ogg"];
 
 let hlsInstance = null;
 let dashInstance = null;
+let torrentClient = null;
+let activeTorrent = null;
 
 function getRecentStorageKey() {
   const session = window.AppFilmesAuth?.getSession?.();
@@ -56,6 +59,7 @@ function resetPlayers() {
     dashInstance = null;
   }
 
+  destroyTorrent();
   video.pause();
   video.removeAttribute("src");
   video.load();
@@ -69,12 +73,6 @@ function normalizeUrl(rawUrl) {
     throw new Error("Cole um link primeiro.");
   }
 
-  if (/^magnet:/i.test(trimmed)) {
-    throw new Error(
-      "Magnet nao e um link de video tocavel no navegador. Use um link direto MP4/WebM, HLS .m3u8, DASH .mpd ou embed permitido.",
-    );
-  }
-
   const withProtocol = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
   const parsed = new URL(withProtocol);
 
@@ -83,6 +81,10 @@ function normalizeUrl(rawUrl) {
   }
 
   return parsed;
+}
+
+function isMagnetLink(value) {
+  return /^magnet:/i.test(value.trim());
 }
 
 function getExtension(url) {
@@ -123,6 +125,15 @@ async function playWhenReady() {
     await video.play();
   } catch {
     setStatus(modeBadge.textContent, "Video carregado. Aperte play para iniciar.");
+  }
+}
+
+function destroyTorrent() {
+  activeTorrent = null;
+
+  if (torrentClient) {
+    torrentClient.destroy();
+    torrentClient = null;
   }
 }
 
@@ -179,6 +190,114 @@ async function loadDash(url) {
   const dashjs = await loadScriptOnce("https://cdn.dashjs.org/latest/dash.all.min.js", "dashjs");
   dashInstance = dashjs.MediaPlayer().create();
   dashInstance.initialize(video, url.href, autoPlay.checked);
+}
+
+function getVideoTorrentFile(torrent) {
+  return torrent.files
+    .filter((file) => {
+      const extension = file.name.split(".").pop()?.toLowerCase();
+      return TORRENT_VIDEO_EXTENSIONS.includes(extension);
+    })
+    .sort((a, b) => b.length - a.length)[0];
+}
+
+async function loadTorrentVideo(magnetLink) {
+  resetPlayers();
+  showVideo();
+
+  if (!window.WebTorrent) {
+    throw new Error("WebTorrent nao carregou. Verifique a conexao com o CDN jsDelivr.");
+  }
+
+  torrentClient = new WebTorrent();
+  setStatus("Torrent", "Conectando aos peers via WebTorrent...");
+
+  await new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error("Nao encontrei peers WebTorrent a tempo. Esse magnet pode nao ter tracker WebRTC ativo."));
+    }, 45000);
+
+    torrentClient.on("error", reject);
+    activeTorrent = torrentClient.add(magnetLink, (torrent) => {
+      window.clearTimeout(timeoutId);
+
+      const file = getVideoTorrentFile(torrent);
+      if (!file) {
+        reject(new Error("O torrent nao tem arquivo de video compativel (.mp4, .webm, .mkv, .mov, .ogv)."));
+        return;
+      }
+
+      setStatus("Torrent", `Carregando ${file.name}...`);
+      file.renderTo(video, { autoplay: autoPlay.checked, controls: true }, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        setStatus("Torrent", "Reproduzindo via WebTorrent. A velocidade depende dos peers disponiveis.");
+        resolve();
+      });
+    });
+  });
+}
+
+async function reproduzirMidia(urlOuMagnet) {
+  const rawValue = urlOuMagnet.trim();
+
+  if (isMagnetLink(rawValue)) {
+    await loadTorrentVideo(rawValue);
+    addRecent({ href: rawValue, hostname: "magnet" }, "Torrent");
+    return;
+  }
+
+  const url = normalizeUrl(rawValue);
+  const extension = getExtension(url);
+  const forcedMode = playerMode.value;
+
+  if (forcedMode === "direct") {
+    await loadDirectVideo(url);
+    addRecent(url, "Direto");
+    return;
+  }
+
+  if (forcedMode === "hls") {
+    await loadHls(url);
+    addRecent(url, "HLS");
+    return;
+  }
+
+  if (forcedMode === "dash") {
+    await loadDash(url);
+    addRecent(url, "DASH");
+    return;
+  }
+
+  if (forcedMode === "embed") {
+    loadEmbed(url);
+    addRecent(url, "Embed");
+    return;
+  }
+
+  if (extension === "m3u8") {
+    await loadHls(url);
+    addRecent(url, "HLS");
+    return;
+  }
+
+  if (extension === "mpd") {
+    await loadDash(url);
+    addRecent(url, "DASH");
+    return;
+  }
+
+  if (DIRECT_VIDEO_EXTENSIONS.includes(extension)) {
+    await loadDirectVideo(url);
+    addRecent(url, "Direto");
+    return;
+  }
+
+  loadEmbed(url);
+  addRecent(url, "Embed");
 }
 
 function getYouTubeId(url) {
@@ -422,54 +541,7 @@ function renderRecent() {
 
 async function handleLoad(rawUrl) {
   try {
-    const url = normalizeUrl(rawUrl);
-    const extension = getExtension(url);
-    const forcedMode = playerMode.value;
-
-    if (forcedMode === "direct") {
-      await loadDirectVideo(url);
-      addRecent(url, "Direto");
-      return;
-    }
-
-    if (forcedMode === "hls") {
-      await loadHls(url);
-      addRecent(url, "HLS");
-      return;
-    }
-
-    if (forcedMode === "dash") {
-      await loadDash(url);
-      addRecent(url, "DASH");
-      return;
-    }
-
-    if (forcedMode === "embed") {
-      loadEmbed(url);
-      addRecent(url, "Embed");
-      return;
-    }
-
-    if (extension === "m3u8") {
-      await loadHls(url);
-      addRecent(url, "HLS");
-      return;
-    }
-
-    if (extension === "mpd") {
-      await loadDash(url);
-      addRecent(url, "DASH");
-      return;
-    }
-
-    if (DIRECT_VIDEO_EXTENSIONS.includes(extension)) {
-      await loadDirectVideo(url);
-      addRecent(url, "Direto");
-      return;
-    }
-
-    loadEmbed(url);
-    addRecent(url, "Embed");
+    await reproduzirMidia(rawUrl);
   } catch (error) {
     resetPlayers();
     setStatus("Nao abriu", error.message || "Nao foi possivel carregar esse link.", true);
@@ -526,3 +598,5 @@ window.addEventListener("appfilmes:profile-change", (event) => {
 });
 
 renderRecent();
+
+window.reproduzirMidia = reproduzirMidia;

@@ -2,6 +2,7 @@ const MAX_JSON_BYTES = 12_000;
 const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 const PROFILE_LIMIT = 5;
 const PROFILE_COLORS = ["#35d3b4", "#22aee8", "#f7c66a", "#ff7f8f", "#9d7cff"];
+const PBKDF2_ITERATIONS = 100000;
 
 export default {
   async fetch(request, env, ctx) {
@@ -17,41 +18,41 @@ export default {
       }
 
       if (url.pathname === "/api/auth/register" && request.method === "POST") {
-        return handleRegister(request, env, ctx);
+        return await handleRegister(request, env, ctx);
       }
 
       if (url.pathname === "/api/auth/login" && request.method === "POST") {
-        return handleLogin(request, env, ctx);
+        return await handleLogin(request, env, ctx);
       }
 
       if (url.pathname === "/api/auth/me" && request.method === "GET") {
-        return handleMe(request, env);
+        return await handleMe(request, env);
       }
 
       if (url.pathname === "/api/auth/logout" && request.method === "POST") {
-        return handleLogout(request, env);
+        return await handleLogout(request, env);
       }
 
       if (url.pathname === "/api/profiles" && request.method === "GET") {
-        return handleListProfiles(request, env);
+        return await handleListProfiles(request, env);
       }
 
       if (url.pathname === "/api/profiles" && request.method === "POST") {
-        return handleCreateProfile(request, env);
+        return await handleCreateProfile(request, env);
       }
 
       const profileMatch = url.pathname.match(/^\/api\/profiles\/([^/]+)$/);
       if (profileMatch && request.method === "PATCH") {
-        return handleUpdateProfile(request, env, profileMatch[1]);
+        return await handleUpdateProfile(request, env, profileMatch[1]);
       }
 
       if (profileMatch && request.method === "DELETE") {
-        return handleDeleteProfile(request, env, profileMatch[1]);
+        return await handleDeleteProfile(request, env, profileMatch[1]);
       }
 
       const pinMatch = url.pathname.match(/^\/api\/profiles\/([^/]+)\/verify-pin$/);
       if (pinMatch && request.method === "POST") {
-        return handleVerifyProfilePin(request, env, pinMatch[1]);
+        return await handleVerifyProfilePin(request, env, pinMatch[1]);
       }
 
       return json(request, { message: "Rota nao encontrada." }, 404);
@@ -392,7 +393,7 @@ async function hashSecret(secret, salt) {
     {
       name: "PBKDF2",
       salt: base64ToBytes(salt),
-      iterations: 180000,
+      iterations: PBKDF2_ITERATIONS,
       hash: "SHA-256",
     },
     key,
